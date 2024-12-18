@@ -2,9 +2,8 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Converters;
-using Newtonsoft.Json.Serialization;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace GraphQlClientGenerator;
 
@@ -16,8 +15,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
 
     public const string PreprocessorDirectiveDisableNewtonsoftJson = "GRAPHQL_GENERATOR_DISABLE_NEWTONSOFT_JSON";
 
-    public const string RequiredNamespaces =
-        $"""
+    public const string RequiredNamespaces = $"""
         using System;
         using System.Collections;
         using System.Collections.Generic;
@@ -37,35 +35,21 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
 
     private readonly GraphQlGeneratorConfiguration _configuration = configuration ?? new GraphQlGeneratorConfiguration();
 
-    public static HttpClientHandler CreateDefaultHttpClientHandler() =>
-        new() { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate };
+    public static HttpClientHandler CreateDefaultHttpClientHandler() => new() { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate };
 
     private static HttpClient CreateHttpClient(HttpMessageHandler messageHandler = null) =>
         new(messageHandler ?? CreateDefaultHttpClientHandler())
         {
-            DefaultRequestHeaders =
-            {
-                UserAgent = { ProductInfoHeaderValue.Parse($"GraphQlClientGenerator/{typeof(GraphQlGenerator).GetTypeInfo().Assembly.GetName().Version}") }
-            }
+            DefaultRequestHeaders = { UserAgent = { ProductInfoHeaderValue.Parse($"GraphQlClientGenerator/{typeof(GraphQlGenerator).GetTypeInfo().Assembly.GetName().Version}") } },
         };
 
-    private static readonly JsonSerializerSettings SerializerSettings =
-        new()
-        {
-            ContractResolver = new CamelCasePropertyNamesContractResolver(),
-            Converters = { new StringEnumConverter() }
-        };
+    private static readonly JsonSerializerOptions SerializerSettings = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, Converters = { new JsonStringEnumConverter() } };
 
-    private static readonly GraphQlField TypeNameField =
-        new()
-        {
-            Name = NamingHelper.MetadataFieldTypeName,
-            Type = new GraphQlFieldType
-            {
-                Kind = GraphQlTypeKind.Scalar,
-                Name = "String"
-            }
-        };
+    private static readonly GraphQlField TypeNameField = new()
+    {
+        Name = NamingHelper.MetadataFieldTypeName,
+        Type = new GraphQlFieldType { Kind = GraphQlTypeKind.Scalar, Name = "String" },
+    };
 
     public static async Task<GraphQlSchema> RetrieveSchema(HttpMethod method, string url, IEnumerable<KeyValuePair<string, string>> headers = null, HttpMessageHandler messageHandler = null)
     {
@@ -73,7 +57,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
         if (method == HttpMethod.Get)
             url = $"{url}?&query={IntrospectionQuery.Text}";
         else
-            requestContent = new StringContent(JsonConvert.SerializeObject(new { query = IntrospectionQuery.Text }), Encoding.UTF8, "application/json");
+            requestContent = new StringContent(JsonSerializer.Serialize(new { query = IntrospectionQuery.Text }), Encoding.UTF8, "application/json");
 
         using var request = new HttpRequestMessage(method, url);
         request.Content = requestContent;
@@ -85,10 +69,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
         using var httpClient = CreateHttpClient(messageHandler);
         using var response = await httpClient.SendAsync(request);
 
-        var content =
-            response.Content is null
-                ? "(no content)"
-                : await response.Content.ReadAsStringAsync();
+        var content = response.Content is null ? "(no content)" : await response.Content.ReadAsStringAsync();
 
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"Status code: {(int)response.StatusCode} ({response.StatusCode}); content: {content}");
@@ -102,13 +83,11 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
 
         try
         {
-            var schema =
-                JsonConvert.DeserializeObject<GraphQlResult>(content, SerializerSettings)?.Data?.Schema
-                ?? JsonConvert.DeserializeObject<GraphQlData>(content, SerializerSettings)?.Schema;
+            var schema = JsonSerializer.Deserialize<GraphQlResult>(content, SerializerSettings)?.Data?.Schema ?? JsonSerializer.Deserialize<GraphQlData>(content, SerializerSettings)?.Schema;
 
             return schema ?? throw new ArgumentException(notGraphqlSchemaMessage, nameof(content));
         }
-        catch (JsonReaderException exception)
+        catch (JsonException exception)
         {
             throw new ArgumentException(notGraphqlSchemaMessage, nameof(content), exception);
         }
@@ -212,15 +191,14 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
                     if (fieldType.Kind != GraphQlTypeKind.Scalar)
                         continue;
 
-                    var scalarFieldContext =
-                        new ScalarFieldTypeProviderContext
-                        {
-                            Configuration = _configuration,
-                            ComponentType = ClientComponentType.QueryBuilderParameter,
-                            OwnerType = type,
-                            FieldType = member.Type,
-                            FieldName = member.Name
-                        };
+                    var scalarFieldContext = new ScalarFieldTypeProviderContext
+                    {
+                        Configuration = _configuration,
+                        ComponentType = ClientComponentType.QueryBuilderParameter,
+                        OwnerType = type,
+                        FieldType = member.Type,
+                        FieldName = member.Name,
+                    };
 
                     var netType = context.ResolveScalarNetType(scalarFieldContext).NetTypeName.TrimEnd('?');
                     if (netType.EndsWith("object") || netType.EndsWith("System.Object"))
@@ -310,10 +288,8 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
         context.AfterBaseClassGeneration();
     }
 
-    private IEnumerable<T> OrderIfEnabled<T>(IEnumerable<T> source) where T : GraphQlType =>
-        _configuration.GenerationOrder is GenerationOrder.Alphabetical
-            ? source.OrderBy(t => t.Name)
-            : source;
+    private IEnumerable<T> OrderIfEnabled<T>(IEnumerable<T> source)
+        where T : GraphQlType => _configuration.GenerationOrder is GenerationOrder.Alphabetical ? source.OrderBy(t => t.Name) : source;
 
     private static bool IsQueryBuilderGenerationDisabled(GeneratedObjectType objectTypes) => !objectTypes.HasFlag(GeneratedObjectType.QueryBuilders);
 
@@ -331,11 +307,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
         context.BeforeInputClassesGeneration();
 
         foreach (var inputObjectType in inputObjectTypes)
-            GenerateFileMember(
-                context,
-                inputObjectType,
-                [InputObjectInterfaceTypeName],
-                c => GenerateInputDataClassBody(c, inputObjectType.InputFields, context));
+            GenerateFileMember(context, inputObjectType, [InputObjectInterfaceTypeName], c => GenerateInputDataClassBody(c, inputObjectType.InputFields, context));
 
         context.AfterInputClassesGeneration();
     }
@@ -387,10 +359,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
                         {
                             if (context.GetDataPropertyType(nameField.OwnerType, nameField.Field).NetTypeName != interfaceFieldNetType)
                             {
-                                fieldsToGenerate.Add(
-                                    isInterface
-                                        ? nameField with { RequiresNew = true }
-                                        : new(interfaceField, interfaceType, false));
+                                fieldsToGenerate.Add(isInterface ? nameField with { RequiresNew = true } : new(interfaceField, interfaceType, false));
                             }
                         }
                         else
@@ -443,10 +412,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
         return true;
     }
 
-    private static string GetBackingFieldName(string graphQlFieldName, bool requiresRawName) =>
-        requiresRawName
-            ? $"_{graphQlFieldName}"
-            : $"_{NamingHelper.LowerFirst(NamingHelper.ToPascalCase(graphQlFieldName))}";
+    private static string GetBackingFieldName(string graphQlFieldName, bool requiresRawName) => requiresRawName ? $"_{graphQlFieldName}" : $"_{NamingHelper.LowerFirst(NamingHelper.ToPascalCase(graphQlFieldName))}";
 
     private void GenerateDataClassBody(ObjectGenerationContext objectContext, IReadOnlyCollection<FieldGenerationInfo> fieldsToGenerate, GenerationContext context, bool isInterfaceMember)
     {
@@ -495,10 +461,11 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
                     IsDeprecated = fieldInfo.Field.IsDeprecated,
                     DeprecationReason = fieldInfo.Field.DeprecationReason,
                     DecorateWithJsonPropertyAttribute = true,
-                    RequiresRawName = requiresRawName
+                    RequiresRawName = requiresRawName,
                 },
                 (_, propertyGenerationContext) => context.OnDataPropertyGeneration(propertyGenerationContext),
-                context);
+                context
+            );
         }
     }
 
@@ -531,8 +498,9 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
                     IsDeprecated = false,
                     DeprecationReason = null,
                     DecorateWithJsonPropertyAttribute = true,
-                    RequiresRawName = false
-                });
+                    RequiresRawName = false,
+                }
+            );
 
             writer.Write(indentation);
             writer.Write("    private InputPropertyInfo ");
@@ -593,7 +561,8 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
                     writer.Write(indentation);
                     writer.WriteLine("    }");
                 },
-                context);
+                context
+            );
 
         writer.Write(indentation);
         writer.WriteLine("    IEnumerable<InputPropertyInfo> IGraphQlInputObject.GetPropertyValues()");
@@ -675,29 +644,18 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
         context.AfterDataClassGeneration(objectGenerationContext);
     }
 
-    private string AddQuestionMarkIfNullableReferencesEnabled(string dataTypeIdentifier) =>
-        _configuration.CSharpVersion is CSharpVersion.NewestWithNullableReferences ? $"{dataTypeIdentifier}?" : dataTypeIdentifier;
+    private string AddQuestionMarkIfNullableReferencesEnabled(string dataTypeIdentifier) => _configuration.CSharpVersion is CSharpVersion.NewestWithNullableReferences ? $"{dataTypeIdentifier}?" : dataTypeIdentifier;
 
-    private string GetMemberAccessibility() =>
-        _configuration.MemberAccessibility is MemberAccessibility.Internal ? "internal" : "public";
+    private string GetMemberAccessibility() => _configuration.MemberAccessibility is MemberAccessibility.Internal ? "internal" : "public";
 
-    private void GenerateDataProperty(
-        ObjectGenerationContext objectContext,
-        DataPropertyContext propertyContext,
-        WriteDataClassPropertyBodyDelegate writeBody,
-        GenerationContext context)
+    private void GenerateDataProperty(ObjectGenerationContext objectContext, DataPropertyContext propertyContext, WriteDataClassPropertyBodyDelegate writeBody, GenerationContext context)
     {
         var ownerGraphQlType = objectContext.GraphQlType;
         var member = propertyContext.Member;
         var propertyTypeDescription = context.GetDataPropertyType(propertyContext.OwnerType, member);
         var propertyTypeName = propertyTypeDescription.NetTypeName;
 
-        var propertyGenerationContext =
-            new PropertyGenerationContext(
-                objectContext,
-                propertyTypeDescription.NetTypeName,
-                propertyContext.PropertyName,
-                GetBackingFieldName(member.Name, propertyContext.RequiresRawName));
+        var propertyGenerationContext = new PropertyGenerationContext(objectContext, propertyTypeDescription.NetTypeName, propertyContext.PropertyName, GetBackingFieldName(member.Name, propertyContext.RequiresRawName));
 
         context.BeforeDataPropertyGeneration(propertyGenerationContext);
 
@@ -714,11 +672,12 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
         if (decorateWithJsonPropertyAttribute)
         {
             decorateWithJsonPropertyAttribute =
-                _configuration.JsonPropertyGeneration is JsonPropertyGenerationOption.Always ||
-                !String.Equals(
+                _configuration.JsonPropertyGeneration is JsonPropertyGenerationOption.Always
+                || !String.Equals(
                     member.Name,
                     propertyContext.PropertyName.TrimStart('@'),
-                    _configuration.JsonPropertyGeneration is JsonPropertyGenerationOption.CaseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+                    _configuration.JsonPropertyGeneration is JsonPropertyGenerationOption.CaseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal
+                );
 
             if (_configuration.JsonPropertyGeneration is JsonPropertyGenerationOption.Never or JsonPropertyGenerationOption.UseDefaultAlias)
                 decorateWithJsonPropertyAttribute = false;
@@ -729,9 +688,11 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
         var isInterfaceMember = isInterface || requiresExplicitInterfaceImplementation;
         var fieldType = member.Type.UnwrapIfNonNull();
         var isGraphQlInterfaceJsonConverterRequired =
-            !requiresExplicitInterfaceImplementation &&
-            (fieldType.Kind is GraphQlTypeKind.Interface or GraphQlTypeKind.Union ||
-             fieldType.Kind is GraphQlTypeKind.List && UnwrapListItemType(fieldType, false, false, out _).UnwrapIfNonNull().Kind is GraphQlTypeKind.Interface or GraphQlTypeKind.Union);
+            !requiresExplicitInterfaceImplementation
+            && (
+                fieldType.Kind is GraphQlTypeKind.Interface or GraphQlTypeKind.Union
+                || fieldType.Kind is GraphQlTypeKind.List && UnwrapListItemType(fieldType, false, false, out _).UnwrapIfNonNull().Kind is GraphQlTypeKind.Interface or GraphQlTypeKind.Union
+            );
 
         var isOwnerInputObject = ownerGraphQlType.Kind == GraphQlTypeKind.InputObject;
         var isPreprocessorDirectiveDisableNewtonsoftJsonRequired = !isInterfaceMember && decorateWithJsonPropertyAttribute || isGraphQlInterfaceJsonConverterRequired || isOwnerInputObject;
@@ -843,12 +804,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
 
         CSharpHelper.ValidateClassName(className);
 
-        var objectGenerationContext =
-            new ObjectGenerationContext
-            {
-                GraphQlType = graphQlType,
-                CSharpTypeName = className
-            };
+        var objectGenerationContext = new ObjectGenerationContext { GraphQlType = graphQlType, CSharpTypeName = className };
 
         context.BeforeQueryBuilderGeneration(objectGenerationContext);
 
@@ -908,8 +864,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
                 writer.Write('"');
 
                 var csharpPropertyName = NamingHelper.ToPascalCase(field.Name);
-                if (_configuration.JsonPropertyGeneration is JsonPropertyGenerationOption.UseDefaultAlias &&
-                    !String.Equals(field.Name, csharpPropertyName, StringComparison.Ordinal))
+                if (_configuration.JsonPropertyGeneration is JsonPropertyGenerationOption.UseDefaultAlias && !String.Equals(field.Name, csharpPropertyName, StringComparison.Ordinal))
                 {
                     writer.Write(", DefaultAlias = \"");
                     writer.Write(csharpPropertyName);
@@ -1029,11 +984,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
             writer.Write("    public ");
             writer.Write(className);
             writer.Write(" WithParameter<T>(GraphQlQueryParameter<T> parameter)");
-            WriteQueryBuilderMethodBody(
-                useCompatibleSyntax,
-                indentation,
-                writer,
-                () => writer.WriteLine($"{ReturnPrefix(useCompatibleSyntax)}WithParameterInternal(parameter);"));
+            WriteQueryBuilderMethodBody(useCompatibleSyntax, indentation, writer, () => writer.WriteLine($"{ReturnPrefix(useCompatibleSyntax)}WithParameterInternal(parameter);"));
 
             writer.WriteLine();
         }
@@ -1065,12 +1016,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
                         break;
                 }
 
-            var methodParameters =
-                String.Join(
-                    ", ",
-                    argumentDefinitions
-                        .OrderByDescending(d => d.Argument.Type.Kind == GraphQlTypeKind.NonNull)
-                        .Select(d => d.NetParameterDefinitionClause));
+            var methodParameters = String.Join(", ", argumentDefinitions.OrderByDescending(d => d.Argument.Type.Kind == GraphQlTypeKind.NonNull).Select(d => d.NetParameterDefinitionClause));
 
             var requiresFullBody = useCompatibleSyntax || argumentDefinitions.Any();
             var returnPrefix = ReturnPrefix(requiresFullBody);
@@ -1122,7 +1068,8 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
                         }
 
                         writer.WriteLine(");");
-                    });
+                    }
+                );
             }
             else
             {
@@ -1199,7 +1146,8 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
                         }
 
                         writer.WriteLine(");");
-                    });
+                    }
+                );
             }
 
             if (!isFragment)
@@ -1213,11 +1161,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
                 writer.Write(csharpPropertyName);
                 writer.Write("()");
 
-                WriteQueryBuilderMethodBody(
-                    useCompatibleSyntax,
-                    indentation,
-                    writer,
-                    () => writer.WriteLine($"{ReturnPrefix(useCompatibleSyntax)}ExceptField(\"{field.Name}\");"));
+                WriteQueryBuilderMethodBody(useCompatibleSyntax, indentation, writer, () => writer.WriteLine($"{ReturnPrefix(useCompatibleSyntax)}ExceptField(\"{field.Name}\");"));
             }
 
             if (i < fields.Count - 1)
@@ -1230,8 +1174,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
                 writer.Write(stringDataType);
                 writer.Write(" alias = ");
 
-                if (_configuration.JsonPropertyGeneration is JsonPropertyGenerationOption.UseDefaultAlias &&
-                    !String.Equals(field.Name, csharpPropertyName, StringComparison.Ordinal))
+                if (_configuration.JsonPropertyGeneration is JsonPropertyGenerationOption.UseDefaultAlias && !String.Equals(field.Name, csharpPropertyName, StringComparison.Ordinal))
                 {
                     writer.Write('"');
                     writer.Write(csharpPropertyName);
@@ -1304,15 +1247,14 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
         static bool IsCompatibleArgument(GraphQlFieldType argumentType)
         {
             argumentType = argumentType.UnwrapIfNonNull();
-            return
-                argumentType.Kind switch
-                {
-                    GraphQlTypeKind.Scalar => true,
-                    GraphQlTypeKind.Enum => true,
-                    GraphQlTypeKind.InputObject => true,
-                    GraphQlTypeKind.List => IsCompatibleArgument(argumentType.OfType),
-                    _ => false
-                };
+            return argumentType.Kind switch
+            {
+                GraphQlTypeKind.Scalar => true,
+                GraphQlTypeKind.Enum => true,
+                GraphQlTypeKind.InputObject => true,
+                GraphQlTypeKind.List => IsCompatibleArgument(argumentType.OfType),
+                _ => false,
+            };
         }
     }
 
@@ -1348,7 +1290,11 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
                 break;
             }
 
-            nullableSymbols.Add(type.OfType.Kind == GraphQlTypeKind.NonNull ? String.Empty : nullableReferencesEnabled ? "?" : String.Empty);
+            nullableSymbols.Add(
+                type.OfType.Kind == GraphQlTypeKind.NonNull ? String.Empty
+                : nullableReferencesEnabled ? "?"
+                : String.Empty
+            );
             type = unwrappedType;
         }
 
@@ -1356,7 +1302,9 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
 
         netCollectionOpenType =
             levels == 1
-                ? isCovarianceRequired ? "IEnumerable<{0}>" : "ICollection<{0}>"
+                ? isCovarianceRequired
+                    ? "IEnumerable<{0}>"
+                    : "ICollection<{0}>"
                 : String.Concat(Enumerable.Repeat(isCovarianceRequired ? "IEnumerable<" : "ICollection<", levels).Append("{0}").Concat(nullableSymbols.Select(s => $">{s}")));
 
         return type;
@@ -1400,10 +1348,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
             writer.Write(" = null");
         }
 
-        return
-            directiveParameterNames.Any()
-                ? $"new {AddQuestionMarkIfNullableReferencesEnabled("GraphQlDirective")}[] {{ {String.Join(", ", directiveParameterNames)} }}"
-                : "null";
+        return directiveParameterNames.Any() ? $"new {AddQuestionMarkIfNullableReferencesEnabled("GraphQlDirective")}[] {{ {String.Join(", ", directiveParameterNames)} }}" : "null";
     }
 
     private static void WriteQueryBuilderMethodBody(bool requiresFullBody, string indentation, TextWriter writer, Action writeBody)
@@ -1467,15 +1412,14 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
             unwrappedType = argumentType.UnwrapIfNonNull();
         }
 
-        var scalarFieldContext =
-            new ScalarFieldTypeProviderContext
-            {
-                Configuration = _configuration,
-                ComponentType = ClientComponentType.QueryBuilderParameter,
-                OwnerType = ownerType,
-                FieldType = argumentType,
-                FieldName = argument.Name
-            };
+        var scalarFieldContext = new ScalarFieldTypeProviderContext
+        {
+            Configuration = _configuration,
+            ComponentType = ClientComponentType.QueryBuilderParameter,
+            OwnerType = ownerType,
+            FieldType = argumentType,
+            FieldName = argument.Name,
+        };
 
         var argumentTypeDescription =
             unwrappedType.Kind is GraphQlTypeKind.Enum
@@ -1503,22 +1447,17 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
         if (!isArgumentNotNull)
             argumentDefinition = $"{argumentDefinition} = null";
 
-        return
-            new QueryBuilderParameterDefinition
-            {
-                Argument = argument,
-                IsNullable = !isArgumentNotNull,
-                NetParameterName = netParameterName,
-                NetParameterDefinitionClause = argumentDefinition,
-                FormatMask = argumentTypeDescription.FormatMask
-            };
+        return new QueryBuilderParameterDefinition
+        {
+            Argument = argument,
+            IsNullable = !isArgumentNotNull,
+            NetParameterName = netParameterName,
+            NetParameterDefinitionClause = argumentDefinition,
+            FormatMask = argumentTypeDescription.FormatMask,
+        };
     }
 
-    private static void AppendArgumentDictionary(
-        string indentation,
-        TextWriter writer,
-        IReadOnlyCollection<QueryBuilderParameterDefinition> argumentDefinitions,
-        string argumentCollectionVariableName)
+    private static void AppendArgumentDictionary(string indentation, TextWriter writer, IReadOnlyCollection<QueryBuilderParameterDefinition> argumentDefinitions, string argumentCollectionVariableName)
     {
         if (argumentDefinitions.Count == 0)
             return;
@@ -1575,12 +1514,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
     {
         var enumName = context.GetFullyQualifiedNetTypeName(NamingHelper.ToPascalCase(graphQlType.Name), graphQlType.Kind);
 
-        var objectGenerationContext =
-            new ObjectGenerationContext
-            {
-                GraphQlType = graphQlType,
-                CSharpTypeName = enumName
-            };
+        var objectGenerationContext = new ObjectGenerationContext { GraphQlType = graphQlType, CSharpTypeName = enumName };
 
         context.BeforeEnumGeneration(objectGenerationContext);
 
@@ -1596,10 +1530,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
 
         var useCSharpNaming = _configuration.EnumValueNaming == EnumValueNamingOption.CSharp;
         var enumFieldsToGenerate = graphQlType.EnumValues.Where(context.FilterIfDeprecated).ToArray();
-        var byIdentifierGroupedFieldsToGenerate =
-            enumFieldsToGenerate
-                .GroupBy(v => useCSharpNaming ? NamingHelper.ToCSharpEnumName(v.Name) : NamingHelper.EnsureCSharpQuoting(v.Name))
-                .ToArray();
+        var byIdentifierGroupedFieldsToGenerate = enumFieldsToGenerate.GroupBy(v => useCSharpNaming ? NamingHelper.ToCSharpEnumName(v.Name) : NamingHelper.EnsureCSharpQuoting(v.Name)).ToArray();
 
         var valueCounter = 0;
         foreach (var nameValues in byIdentifierGroupedFieldsToGenerate)
@@ -1643,7 +1574,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
         GraphQlDirectiveLocation.Field,
         GraphQlDirectiveLocation.Query,
         GraphQlDirectiveLocation.Mutation,
-        GraphQlDirectiveLocation.Subscription
+        GraphQlDirectiveLocation.Subscription,
     ];
 
     private void GenerateDirectives(GenerationContext context)
@@ -1651,11 +1582,18 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
         if (IsQueryBuilderGenerationDisabled(context.ObjectTypes))
             return;
 
-        var directives =
-            OrderIfEnabled(
-                context.Directives
-                    .Where(d => SupportedDirectiveLocations.Overlaps(d.Locations))
-                    .Select(d => new GraphQlType { Name = d.Name, Description = d.Description, InputFields = d.Args } /* TODO: make some common ancestor */)).ToList();
+        var directives = OrderIfEnabled(
+                context
+                    .Directives.Where(d => SupportedDirectiveLocations.Overlaps(d.Locations))
+                    .Select(d => new GraphQlType
+                    {
+                        Name = d.Name,
+                        Description = d.Description,
+                        InputFields = d.Args,
+                    } /* TODO: make some common ancestor */
+                    )
+            )
+            .ToList();
 
         if (!directives.Any())
             return;
@@ -1677,11 +1615,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
 
         GenerateCodeComments(writer, directive.Description, context.IndentationSize);
 
-        var orderedArgumentDefinitions =
-            ResolveParameterDefinitions(
-                context,
-                directive,
-                directive.InputFields.OrderByDescending(a => a.Type.Kind is GraphQlTypeKind.NonNull));
+        var orderedArgumentDefinitions = ResolveParameterDefinitions(context, directive, directive.InputFields.OrderByDescending(a => a.Type.Kind is GraphQlTypeKind.NonNull));
 
         var argumentList = String.Join(", ", orderedArgumentDefinitions.Select(d => d.NetParameterDefinitionClause));
 
@@ -1750,12 +1684,7 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
 
     public static string GetIndentation(int size) => new(' ', size);
 
-    private record struct QueryBuilderParameterDefinition(
-        GraphQlArgument Argument,
-        bool IsNullable,
-        string NetParameterName,
-        string NetParameterDefinitionClause,
-        string FormatMask);
+    private record struct QueryBuilderParameterDefinition(GraphQlArgument Argument, bool IsNullable, string NetParameterName, string NetParameterDefinitionClause, string FormatMask);
 
     private record struct DataPropertyContext(
         IGraphQlMember Member,
@@ -1765,7 +1694,8 @@ public class GraphQlGenerator(GraphQlGeneratorConfiguration configuration = null
         bool IsDeprecated,
         string DeprecationReason,
         bool DecorateWithJsonPropertyAttribute,
-        bool RequiresRawName);
+        bool RequiresRawName
+    );
 
     private record struct FieldGenerationInfo(GraphQlField Field, GraphQlType OwnerType, bool RequiresNew);
 

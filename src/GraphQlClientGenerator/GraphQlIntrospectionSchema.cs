@@ -1,6 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Runtime.Serialization;
-using Newtonsoft.Json;
+using System.Text.Json.Serialization;
 
 namespace GraphQlClientGenerator;
 
@@ -11,7 +11,7 @@ public class GraphQlResult
 
 public class GraphQlData
 {
-    [JsonProperty("__schema")]
+    [JsonPropertyName("__schema")]
     public GraphQlSchema Schema { get; set; }
 }
 
@@ -81,8 +81,7 @@ public class GraphQlFieldType : GraphQlTypeBase
 {
     public GraphQlFieldType OfType { get; set; }
 
-    private bool Equals(GraphQlFieldType other) =>
-        Kind == other.Kind && Name == other.Name && (OfType is null && other.OfType is null || OfType is not null && other.OfType is not null && OfType.Equals(other.OfType));
+    private bool Equals(GraphQlFieldType other) => Kind == other.Kind && Name == other.Name && (OfType is null && other.OfType is null || OfType is not null && other.OfType is not null && OfType.Equals(other.OfType));
 
     public override bool Equals(object obj)
     {
@@ -115,15 +114,14 @@ public abstract class GraphQlTypeBase
     public const string GraphQlTypeScalarInteger = "Int";
     public const string GraphQlTypeScalarString = "String";
 
-    internal static readonly IReadOnlyCollection<string> AllBuiltInScalarTypeNames =
-        new HashSet<string>
-        {
-            GraphQlTypeScalarBoolean,
-            GraphQlTypeScalarFloat,
-            GraphQlTypeScalarId,
-            GraphQlTypeScalarInteger,
-            GraphQlTypeScalarString
-        };
+    internal static readonly IReadOnlyCollection<string> AllBuiltInScalarTypeNames = new HashSet<string>
+    {
+        GraphQlTypeScalarBoolean,
+        GraphQlTypeScalarFloat,
+        GraphQlTypeScalarId,
+        GraphQlTypeScalarInteger,
+        GraphQlTypeScalarString,
+    };
 
     public GraphQlTypeKind Kind { get; set; }
     public string Name { get; set; }
@@ -144,77 +142,114 @@ public enum GraphQlDirectiveLocation
     /// <summary>
     /// Location adjacent to a query operation.
     /// </summary>
-    [EnumMember(Value = "QUERY")] Query,
+    [EnumMember(Value = "QUERY")]
+    Query,
+
     /// <summary>
     /// Location adjacent to a mutation operation.
     /// </summary>
-    [EnumMember(Value = "MUTATION")] Mutation,
+    [EnumMember(Value = "MUTATION")]
+    Mutation,
+
     /// <summary>
     /// Location adjacent to a subscription operation.
     /// </summary>
-    [EnumMember(Value = "SUBSCRIPTION")] Subscription,
+    [EnumMember(Value = "SUBSCRIPTION")]
+    Subscription,
+
     /// <summary>
     /// Location adjacent to a field.
     /// </summary>
-    [EnumMember(Value = "FIELD")] Field,
+    [EnumMember(Value = "FIELD")]
+    Field,
+
     /// <summary>
     /// Location adjacent to a fragment definition.
     /// </summary>
-    [EnumMember(Value = "FRAGMENT_DEFINITION")] FragmentDefinition,
+    [EnumMember(Value = "FRAGMENT_DEFINITION")]
+    FragmentDefinition,
+
     /// <summary>
     /// Location adjacent to a fragment spread.
     /// </summary>
-    [EnumMember(Value = "FRAGMENT_SPREAD")] FragmentSpread,
+    [EnumMember(Value = "FRAGMENT_SPREAD")]
+    FragmentSpread,
+
     /// <summary>
     /// Location adjacent to an inline fragment.
     /// </summary>
-    [EnumMember(Value = "INLINE_FRAGMENT")] InlineFragment,
+    [EnumMember(Value = "INLINE_FRAGMENT")]
+    InlineFragment,
+
     /// <summary>
     /// Location adjacent to a variable definition.
     /// </summary>
-    [EnumMember(Value = "VARIABLE_DEFINITION")] VariableDefinition,
+    [EnumMember(Value = "VARIABLE_DEFINITION")]
+    VariableDefinition,
+
     /// <summary>
     /// Location adjacent to a schema definition.
     /// </summary>
-    [EnumMember(Value = "SCHEMA")] Schema,
+    [EnumMember(Value = "SCHEMA")]
+    Schema,
+
     /// <summary>
     /// Location adjacent to a scalar definition.
     /// </summary>
-    [EnumMember(Value = "SCALAR")] Scalar,
+    [EnumMember(Value = "SCALAR")]
+    Scalar,
+
     /// <summary>
     /// Location adjacent to an object type definition.
     /// </summary>
-    [EnumMember(Value = "OBJECT")] Object,
+    [EnumMember(Value = "OBJECT")]
+    Object,
+
     /// <summary>
     /// Location adjacent to a field definition.
     /// </summary>
-    [EnumMember(Value = "FIELD_DEFINITION")] FieldDefinition,
+    [EnumMember(Value = "FIELD_DEFINITION")]
+    FieldDefinition,
+
     /// <summary>
     /// Location adjacent to an argument definition.
     /// </summary>
-    [EnumMember(Value = "ARGUMENT_DEFINITION")] ArgumentDefinition,
+    [EnumMember(Value = "ARGUMENT_DEFINITION")]
+    ArgumentDefinition,
+
     /// <summary>
     /// Location adjacent to an interface definition.
     /// </summary>
-    [EnumMember(Value = "INTERFACE")] Interface,
+    [EnumMember(Value = "INTERFACE")]
+    Interface,
+
     /// <summary>
     /// Location adjacent to a union definition.
     /// </summary>
-    [EnumMember(Value = "UNION")] Union,
+    [EnumMember(Value = "UNION")]
+    Union,
+
     /// <summary>
     /// Location adjacent to an enum definition.
     /// </summary>
-    [EnumMember(Value = "ENUM")] Enum,
+    [EnumMember(Value = "ENUM")]
+    Enum,
+
     /// <summary>
     /// Location adjacent to an enum value definition.
     /// </summary>
-    [EnumMember(Value = "ENUM_VALUE")] EnumValue,
+    [EnumMember(Value = "ENUM_VALUE")]
+    EnumValue,
+
     /// <summary>
     /// Location adjacent to an input object type definition.
     /// </summary>
-    [EnumMember(Value = "INPUT_OBJECT")] InputObject,
+    [EnumMember(Value = "INPUT_OBJECT")]
+    InputObject,
+
     /// <summary>
     /// Location adjacent to an input field definition.
     /// </summary>
-    [EnumMember(Value = "INPUT_FIELD_DEFINITION")] InputFieldDefinition
+    [EnumMember(Value = "INPUT_FIELD_DEFINITION")]
+    InputFieldDefinition,
 }
